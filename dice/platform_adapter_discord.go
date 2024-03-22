@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -82,10 +83,10 @@ func (pa *PlatformAdapterDiscord) Serve() int {
 		dg.Dialer.Proxy = http.ProxyURL(u)
 	}
 	dg.AddHandler(func(s *discordgo.Session, m *discordgo.MessageCreate) {
-		// 忽略自己的消息……以及其他机器人的消息和系统消息
-		if m.Author.Bot || m.Author.System {
-			return
-		}
+		// 移除此功能：忽略自己的消息……以及其他机器人的消息和系统消息
+		//if m.Author.Bot || m.Author.System {
+		//	return
+		//}
 		msg, errConv := pa.toStdMessage(m)
 		if errConv != nil {
 			return
@@ -547,7 +548,45 @@ func ExtractDiscordChannelID(id string) string {
 func (pa *PlatformAdapterDiscord) toStdMessage(m *discordgo.MessageCreate) (*Message, error) {
 	msg := new(Message)
 	msg.Time = m.Timestamp.Unix()
-	msg.Message = m.Content
+	//msg.Message = m.Content
+	// 如果m.Content是空的，那么处理Embeds里第0个的Description
+	if m.Content == "" && len(m.Embeds) > 0 {
+		// 去掉消息里的转义符\
+		temp := strings.Replace(m.Embeds[0].Description, "\\", "", -1)
+
+		// 不使用函数，移除其中的标记符号，* ~~ ` ||
+		//temp = strings.Replace(temp, "**", "", -1)
+		//temp = strings.Replace(temp, "~~", "", -1)
+		//temp = strings.Replace(temp, "`", "", -1)
+		//temp = strings.Replace(temp, "||", "", -1)
+		//re := regexp.MustCompile(`\*(.*?)\*`)
+		//temp = re.ReplaceAllStringFunc(temp, func(s string) string {
+		//	return strings.Trim(s, "*")
+		//})
+		temp = Strip(temp)
+		// 移除消息前的>符号
+		if strings.HasPrefix(temp, ">") {
+			temp = temp[1:]
+		}
+		msg.Message = temp
+	} else {
+		temp := strings.Replace(m.Content, "\\", "", -1)
+		// 不使用函数，移除其中的标记符号，* ~~ ` ||
+		//temp = strings.Replace(temp, "**", "", -1)
+		//temp = strings.Replace(temp, "~~", "", -1)
+		//temp = strings.Replace(temp, "`", "", -1)
+		//temp = strings.Replace(temp, "||", "", -1)
+		//re := regexp.MustCompile(`\*(.*?)\*`)
+		//temp = re.ReplaceAllStringFunc(temp, func(s string) string {
+		//	return strings.Trim(s, "*")
+		//})
+		// 如果字符串的第一个是>，那么移除
+		temp = Strip(temp)
+		if strings.HasPrefix(temp, ">") {
+			temp = temp[1:]
+		}
+		msg.Message = temp
+	}
 	msg.RawID = m.ID
 	msg.Platform = "DISCORD"
 	ch, err := pa.IntentSession.Channel(m.ChannelID)
@@ -591,4 +630,77 @@ func (pa *PlatformAdapterDiscord) checkIfGuildAdmin(m *discordgo.Message) bool {
 	// BAN_MEMBERS *	0x0000000000000004 (1 << 2)	Allows banning members
 	// ADMINISTRATOR *	0x0000000000000008 (1 << 3)	Allows all permissions and bypasses channel permission overwrites
 	return p&(1<<1|1<<2|1<<3) > 0 || p == discordgo.PermissionAll
+}
+
+// https://github.com/writeas/go-strip-markdown/blob/master/strip.go
+var (
+	listLeadersReg = regexp.MustCompile(`(?m)^([\s\t]*)([\*\-\+]|\d\.)\s+`)
+
+	headerReg = regexp.MustCompile(`\n={2,}`)
+	strikeReg = regexp.MustCompile(`~~`)
+	codeReg   = regexp.MustCompile("`{3}" + `.*\n`)
+
+	htmlReg         = regexp.MustCompile("<(.*?)>")
+	emphReg         = regexp.MustCompile(`\*\*([^*]+)\*\*`)
+	emphReg2        = regexp.MustCompile(`\*([^*]+)\*`)
+	emphReg3        = regexp.MustCompile(`__([^_]+)__`)
+	emphReg4        = regexp.MustCompile(`_([^_]+)_`)
+	setextHeaderReg = regexp.MustCompile(`^[=\-]{2,}\s*$`)
+	footnotesReg    = regexp.MustCompile(`\[\^.+?\](\: .*?$)?`)
+	footnotes2Reg   = regexp.MustCompile(`\s{0,2}\[.*?\]: .*?$`)
+	imagesReg       = regexp.MustCompile(`\!\[(.*?)\]\s?[\[\(].*?[\]\)]`)
+	linksReg        = regexp.MustCompile(`\[(.*?)\][\[\(].*?[\]\)]`)
+	blockquoteReg   = regexp.MustCompile(`>\s*`)
+	refLinkReg      = regexp.MustCompile(`^\s{1,2}\[(.*?)\]: (\S+)( ".*?")?\s*$`)
+	atxHeaderReg    = regexp.MustCompile(`(?m)^\#{1,6}\s*([^#]+)\s*(\#{1,6})?$`)
+	atxHeaderReg2   = regexp.MustCompile(`([\*_]{1,3})(\S.*?\S)?P1`)
+	atxHeaderReg3   = regexp.MustCompile("(?m)(`{3,})" + `(.*?)?P1`)
+	atxHeaderReg4   = regexp.MustCompile(`^-{3,}\s*$`)
+	atxHeaderReg5   = regexp.MustCompile("`(.+?)`")
+	atxHeaderReg6   = regexp.MustCompile(`\n{2,}`)
+)
+
+// Strip returns the given string sans any Markdown.
+// Where necessary, elements are replaced with their best textual forms, so
+// for example, hyperlinks are stripped of their URL and become only the link
+// text, and images lose their URL and become only the alt text.
+func Strip(s string) string {
+	return StripOptions(s, Options{})
+}
+
+type Options struct {
+	SkipImages bool
+}
+
+func StripOptions(s string, opts Options) string {
+	res := s
+	res = listLeadersReg.ReplaceAllString(res, "$1")
+
+	res = headerReg.ReplaceAllString(res, "\n")
+	res = strikeReg.ReplaceAllString(res, "")
+	res = codeReg.ReplaceAllString(res, "")
+
+	res = emphReg.ReplaceAllString(res, "$1")
+	res = emphReg2.ReplaceAllString(res, "$1")
+	res = emphReg3.ReplaceAllString(res, "$1")
+	res = emphReg4.ReplaceAllString(res, "$1")
+	res = htmlReg.ReplaceAllString(res, "$1")
+	res = setextHeaderReg.ReplaceAllString(res, "")
+	res = footnotesReg.ReplaceAllString(res, "")
+	res = footnotes2Reg.ReplaceAllString(res, "")
+	if opts.SkipImages {
+		res = imagesReg.ReplaceAllString(res, "")
+	} else {
+		res = imagesReg.ReplaceAllString(res, "$1")
+	}
+	res = linksReg.ReplaceAllString(res, "$1")
+	res = blockquoteReg.ReplaceAllString(res, "  ")
+	res = refLinkReg.ReplaceAllString(res, "")
+	res = atxHeaderReg.ReplaceAllString(res, "$1")
+	res = atxHeaderReg2.ReplaceAllString(res, "$2")
+	res = atxHeaderReg3.ReplaceAllString(res, "$2")
+	res = atxHeaderReg4.ReplaceAllString(res, "")
+	res = atxHeaderReg5.ReplaceAllString(res, "$1")
+	res = atxHeaderReg6.ReplaceAllString(res, "\n\n")
+	return res
 }
