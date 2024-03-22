@@ -195,9 +195,10 @@ func (pa *PlatformAdapterKook) Serve() int {
 	}
 	s := kook.New(pa.Token, plog.NewLogger(&l))
 	s.AddHandler(func(ctx *kook.KmarkdownMessageContext) {
-		if ctx.Extra.Author.Bot {
-			return
-		}
+		// 接收KOOK机器人消息
+		//if ctx.Extra.Author.Bot {
+		//	return
+		//}
 		if ctx.Common.Type == kook.MessageTypeKMarkdown || ctx.Common.Type == kook.MessageTypeImage {
 			pa.Session.Execute(pa.EndPoint, pa.toStdMessage(ctx), false)
 			return
