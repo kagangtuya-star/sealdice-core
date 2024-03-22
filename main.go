@@ -207,7 +207,7 @@ func main() {
 	if runtime.GOOS == "android" {
 		fixTimezone()
 	}
-	dnsHack()
+	//dnsHack()
 
 	_ = os.MkdirAll("./data", 0o755)
 	MainLoggerInit("./data/main.log", true)
