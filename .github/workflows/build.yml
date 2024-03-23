@@ -3,11 +3,11 @@ name: Build
 on:
   push:
     paths-ignore:
-      - '**.yml'
-      - '!.github/workflows/build.yml'
-      - '**.yaml'
-      - '**.md'
-      - '.gitignore'
+      - "**.yml"
+      - "!.github/workflows/build.yml"
+      - "**.yaml"
+      - "**.md"
+      - ".gitignore"
   workflow_dispatch:
 
 env:
@@ -17,7 +17,7 @@ env:
 jobs:
   ui-build:
     name: Build UI
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     steps:
       - name: Code
         uses: actions/checkout@v4
@@ -43,16 +43,16 @@ jobs:
 
   core-build:
     name: Build binary
-    runs-on: 'ubuntu-latest'
+    runs-on: ubuntu-20.04
     needs: ui-build
     strategy:
       matrix:
         # target: linux/amd64, linux/arm64, windows/386, windows/amd64
-        goos: [ linux, windows ]
-        goarch: [ '386', amd64, arm64 ]
+        goos: [linux, windows]
+        goarch: ["386", amd64, arm64]
         exclude:
           - goos: linux
-            goarch: '386'
+            goarch: "386"
           - goos: windows
             goarch: arm64
       fail-fast: true
@@ -72,7 +72,7 @@ jobs:
       - name: Install Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.20'
+          go-version: "1.20"
       - name: Install Dependencies
         run: go get .
       - name: Get UI Resources
@@ -125,8 +125,8 @@ jobs:
     strategy:
       matrix:
         # target: darwin/amd64 darwin/arm64
-        goos: [ darwin ]
-        goarch: [ amd64, arm64 ]
+        goos: [darwin]
+        goarch: [amd64, arm64]
       fail-fast: true
     steps:
       - name: Code
@@ -136,7 +136,7 @@ jobs:
       - name: Install Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.20'
+          go-version: "1.20"
       - name: Install Dependencies
         run: go get .
       - name: Get UI Resources
@@ -182,7 +182,7 @@ jobs:
       - name: Install Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.20'
+          go-version: "1.20"
       - name: Install dependencies
         run: go get .
       - name: Get UI Resources
@@ -213,7 +213,7 @@ jobs:
   clear-temp-artifact:
     name: Clear Temp Artifacts
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-20.04
     needs:
       - core-build
       - core-darwin-build
