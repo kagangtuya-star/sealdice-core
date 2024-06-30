@@ -648,16 +648,16 @@ var (
 	setextHeaderReg = regexp.MustCompile(`^[=\-]{2,}\s*$`)
 	footnotesReg    = regexp.MustCompile(`\[\^.+?\](\: .*?$)?`)
 	footnotes2Reg   = regexp.MustCompile(`\s{0,2}\[.*?\]: .*?$`)
-	imagesReg       = regexp.MustCompile(`!\[(.*?)\]\s?[\[\(].*?[\]\)]`)
-	linksReg        = regexp.MustCompile(`\[(.*?)\]\s?[\[\(].*?[\]\)]`)
-	blockquoteReg   = regexp.MustCompile(`>\s*`)
-	refLinkReg      = regexp.MustCompile(`^\s{1,2}\[(.*?)\]: (\S+)( ".*?")?\s*$`)
-	atxHeaderReg    = regexp.MustCompile(`(?m)^\#{1,6}\s*([^#]+)\s*(\#{1,6})?$`)
-	atxHeaderReg2   = regexp.MustCompile(`([\*_]{1,3})(\S.*?\S)?P1`)
-	atxHeaderReg3   = regexp.MustCompile("(?m)(`{3,})" + `(.*?)?P1`)
-	atxHeaderReg4   = regexp.MustCompile(`^-{3,}\s*$`)
-	atxHeaderReg5   = regexp.MustCompile("`(.+?)`")
-	atxHeaderReg6   = regexp.MustCompile(`\n{2,}`)
+	//imagesReg       = regexp.MustCompile(`\!\[(.*?)\]\s?[\[\(].*?[\]\)]`)
+	//linksReg        = regexp.MustCompile(`\[(.*?)\][\[\(].*?[\]\)]`)
+	blockquoteReg = regexp.MustCompile(`>\s*`)
+	//refLinkReg      = regexp.MustCompile(`^\s{1,2}\[(.*?)\]: (\S+)( ".*?")?\s*$`)
+	atxHeaderReg  = regexp.MustCompile(`(?m)^\#{1,6}\s*([^#]+)\s*(\#{1,6})?$`)
+	atxHeaderReg2 = regexp.MustCompile(`([\*_]{1,3})(\S.*?\S)?P1`)
+	atxHeaderReg3 = regexp.MustCompile("(?m)(`{3,})" + `(.*?)?P1`)
+	atxHeaderReg4 = regexp.MustCompile(`^-{3,}\s*$`)
+	atxHeaderReg5 = regexp.MustCompile("`(.+?)`")
+	atxHeaderReg6 = regexp.MustCompile(`\n{2,}`)
 )
 
 // Strip returns the given string sans any Markdown.
@@ -688,14 +688,14 @@ func StripOptions(s string, opts Options) string {
 	res = setextHeaderReg.ReplaceAllString(res, "")
 	res = footnotesReg.ReplaceAllString(res, "")
 	res = footnotes2Reg.ReplaceAllString(res, "")
-	if opts.SkipImages {
-		res = imagesReg.ReplaceAllString(res, "")
-	} else {
-		res = imagesReg.ReplaceAllString(res, "$1")
-	}
-	res = linksReg.ReplaceAllString(res, "$1")
+	//if opts.SkipImages {
+	//	res = imagesReg.ReplaceAllString(res, "")
+	//} else {
+	//	res = imagesReg.ReplaceAllString(res, "$1")
+	//}
+	//res = linksReg.ReplaceAllString(res, "$1")
 	res = blockquoteReg.ReplaceAllString(res, "  ")
-	res = refLinkReg.ReplaceAllString(res, "")
+	//res = refLinkReg.ReplaceAllString(res, "")
 	res = atxHeaderReg.ReplaceAllString(res, "$1")
 	res = atxHeaderReg2.ReplaceAllString(res, "$2")
 	res = atxHeaderReg3.ReplaceAllString(res, "$2")
