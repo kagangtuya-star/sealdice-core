@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"go.uber.org/zap"
 
 	emitter "sealdice-core/dice/imsdk/onebot"
+	emitter_types "sealdice-core/dice/imsdk/onebot/types"
 	"sealdice-core/logger"
 	"sealdice-core/message"
 )
@@ -105,12 +107,20 @@ func (p *PlatformAdapterOnebot) QuitGroup(_ *MsgContext, id string) {
 
 // SendToPerson 这几个到时候直接调用SendSegment的方法来处理，为以后铺路
 func (p *PlatformAdapterOnebot) SendToPerson(ctx *MsgContext, userID string, text string, flag string) {
+	if p == nil {
+		zap.S().Named(logger.LogKeyAdapter).Warnf("向用户发送消息失败: 当前 OneBot 账号未正确初始化，消息未发出。user=%s flag=%s text=%q", userID, flag, text)
+		return
+	}
 	msgElement := message.ConvertStringMessage(text)
 	p.SendSegmentToPerson(ctx, userID, msgElement, flag)
 }
 
 // SendToGroup 这几个到时候直接调用SendSegment的方法来处理，为以后铺路
 func (p *PlatformAdapterOnebot) SendToGroup(ctx *MsgContext, groupID string, text string, flag string) {
+	if p == nil {
+		zap.S().Named(logger.LogKeyAdapter).Warnf("向群发送消息失败: 当前 OneBot 账号未正确初始化，消息未发出。group=%s flag=%s text=%q", groupID, flag, text)
+		return
+	}
 	msgElement := message.ConvertStringMessage(text)
 	p.SendSegmentToGroup(ctx, groupID, msgElement, flag)
 }
@@ -207,50 +217,195 @@ func (p *PlatformAdapterOnebot) SetGroupCardName(ctx *MsgContext, name string) {
 }
 
 func (p *PlatformAdapterOnebot) SendSegmentToGroup(ctx *MsgContext, groupID string, msg []message.IMessageElement, flag string) {
-	rawMsg, msgText := convertSealMsgToMessageChain(msg)
-	rawId, err := p.sendEmitter.SendGrMsg(p.ctx, ExtractQQEmitterGroupID(groupID), rawMsg) // 这里可以获取到发送消息的ID
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			p.logger.Warnf("SendGrMsg 超时: group=%s err=%v", groupID, err)
-		} else {
-			p.logger.Warnf("SendGrMsg 失败: group=%s err=%v", groupID, err)
+	if p == nil || p.sendEmitter == nil {
+		log := zap.S().Named(logger.LogKeyAdapter)
+		if p != nil && p.logger != nil {
+			log = p.logger
 		}
+		log.Warnf("向群发送消息失败: 当前账号连接不可用，消息未发出。group=%s flag=%s msg_len=%d", groupID, flag, len(msg))
 		return
 	}
-	// 支援插件发送调用
-	p.Session.OnMessageSend(ctx, &Message{
-		Platform:    "QQ",
-		MessageType: "group",
-		GroupID:     groupID,
-		Segment:     msg,
-		Message:     msgText,
-		Sender: SenderBase{
-			UserID:   p.EndPoint.UserID,
-			Nickname: p.EndPoint.Nickname,
-		},
-		RawID: rawId,
-	}, flag)
+	if len(msg) == 0 {
+		return
+	}
+
+	var rawID *emitter_types.SendMsgRes
+	rawGroupID := ExtractQQEmitterGroupID(groupID)
+	pendingMsg := make([]message.IMessageElement, 0, len(msg))
+	sentAnything := false
+	sentSegments := make([]message.IMessageElement, 0, len(msg))
+
+	defer func() {
+		if !sentAnything || p.Session == nil || p.EndPoint == nil {
+			return
+		}
+		_, sentMsgText := convertSealMsgToMessageChain(sentSegments)
+		p.Session.OnMessageSend(ctx, &Message{
+			Platform:    "QQ",
+			MessageType: "group",
+			GroupID:     groupID,
+			Segment:     sentSegments,
+			Message:     sentMsgText,
+			Sender: SenderBase{
+				UserID:   p.EndPoint.UserID,
+				Nickname: p.EndPoint.Nickname,
+			},
+			RawID: rawID,
+		}, flag)
+	}()
+
+	flushPending := func() bool {
+		if len(pendingMsg) == 0 {
+			return true
+		}
+		batch := make([]message.IMessageElement, len(pendingMsg))
+		copy(batch, pendingMsg)
+		rawMsg, _ := convertSealMsgToMessageChain(batch)
+		var err error
+		rawID, err = p.sendEmitter.SendGrMsg(p.ctx, ExtractQQEmitterGroupID(groupID), rawMsg) // 这里可以获取到发送消息的ID
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				p.logger.Warnf("SendGrMsg 超时: group=%s err=%v", groupID, err)
+			} else {
+				p.logger.Warnf("SendGrMsg 失败: group=%s err=%v", groupID, err)
+			}
+			return false
+		}
+		sentSegments = append(sentSegments, batch...)
+		pendingMsg = pendingMsg[:0]
+		sentAnything = true
+		return true
+	}
+
+	for _, item := range msg {
+		if item.Type() != message.Poke {
+			pendingMsg = append(pendingMsg, item)
+			continue
+		}
+
+		if !flushPending() {
+			return
+		}
+
+		poke, ok := item.(*message.PokeElement)
+		if !ok || poke.Target == "" {
+			continue
+		}
+		pokeTarget, parseErr := strconv.ParseInt(poke.Target, 10, 64)
+		if parseErr != nil {
+			p.logger.Warnf("GroupPoke target parse failed: group=%s target=%s err=%v", groupID, poke.Target, parseErr)
+			continue
+		}
+		_, actionErr := p.sendEmitter.Raw(p.ctx, "group_poke", struct {
+			GroupID int64 `json:"group_id"`
+			UserID  int64 `json:"user_id"`
+		}{
+			GroupID: rawGroupID,
+			UserID:  pokeTarget,
+		})
+		if actionErr != nil {
+			p.logger.Warnf("GroupPoke failed: group=%s target=%s err=%v", groupID, poke.Target, actionErr)
+			continue
+		}
+		sentSegments = append(sentSegments, &message.PokeElement{Target: poke.Target})
+		sentAnything = true
+	}
+
+	if !flushPending() {
+		return
+	}
 }
 
 func (p *PlatformAdapterOnebot) SendSegmentToPerson(ctx *MsgContext, userID string, msg []message.IMessageElement, flag string) {
-	rawMsg, msgText := convertSealMsgToMessageChain(msg)
-	rawId, err := p.sendEmitter.SendPvtMsg(p.ctx, ExtractQQEmitterUserID(userID), rawMsg) // 这里可以获取到发送消息的ID
-	if err != nil {
-		p.logger.Errorf("发送消息异常 %v", err)
+	if p == nil || p.sendEmitter == nil {
+		log := zap.S().Named(logger.LogKeyAdapter)
+		if p != nil && p.logger != nil {
+			log = p.logger
+		}
+		log.Warnf("向用户发送消息失败: 当前账号连接不可用，消息未发出。user=%s flag=%s msg_len=%d", userID, flag, len(msg))
 		return
 	}
-	// 支援插件发送调用
-	p.Session.OnMessageSend(ctx, &Message{
-		Platform:    "QQ",
-		MessageType: "private",
-		Segment:     msg,
-		Message:     msgText,
-		Sender: SenderBase{
-			UserID:   p.EndPoint.UserID,
-			Nickname: p.EndPoint.Nickname,
-		},
-		RawID: rawId,
-	}, flag)
+	if len(msg) == 0 {
+		return
+	}
+
+	var rawID *emitter_types.SendMsgRes
+	pendingMsg := make([]message.IMessageElement, 0, len(msg))
+	sentAnything := false
+	sentSegments := make([]message.IMessageElement, 0, len(msg))
+
+	defer func() {
+		if !sentAnything || p.Session == nil || p.EndPoint == nil {
+			return
+		}
+		_, sentMsgText := convertSealMsgToMessageChain(sentSegments)
+		p.Session.OnMessageSend(ctx, &Message{
+			Platform:    "QQ",
+			MessageType: "private",
+			Segment:     sentSegments,
+			Message:     sentMsgText,
+			Sender: SenderBase{
+				UserID:   p.EndPoint.UserID,
+				Nickname: p.EndPoint.Nickname,
+			},
+			RawID: rawID,
+		}, flag)
+	}()
+
+	flushPending := func() bool {
+		if len(pendingMsg) == 0 {
+			return true
+		}
+		batch := make([]message.IMessageElement, len(pendingMsg))
+		copy(batch, pendingMsg)
+		rawMsg, _ := convertSealMsgToMessageChain(batch)
+		var err error
+		rawID, err = p.sendEmitter.SendPvtMsg(p.ctx, ExtractQQEmitterUserID(userID), rawMsg) // 这里可以获取到发送消息的ID
+		if err != nil {
+			p.logger.Errorf("发送消息异常 %v", err)
+			return false
+		}
+		sentSegments = append(sentSegments, batch...)
+		pendingMsg = pendingMsg[:0]
+		sentAnything = true
+		return true
+	}
+
+	for _, item := range msg {
+		if item.Type() != message.Poke {
+			pendingMsg = append(pendingMsg, item)
+			continue
+		}
+
+		if !flushPending() {
+			return
+		}
+
+		poke, ok := item.(*message.PokeElement)
+		if !ok || poke.Target == "" {
+			continue
+		}
+		pokeTarget, parseErr := strconv.ParseInt(poke.Target, 10, 64)
+		if parseErr != nil {
+			p.logger.Warnf("FriendPoke target parse failed: user=%s target=%s err=%v", userID, poke.Target, parseErr)
+			continue
+		}
+		_, actionErr := p.sendEmitter.Raw(p.ctx, "friend_poke", struct {
+			UserID int64 `json:"user_id"`
+		}{
+			UserID: pokeTarget,
+		})
+		if actionErr != nil {
+			p.logger.Warnf("FriendPoke failed: user=%s target=%s err=%v", userID, poke.Target, actionErr)
+			continue
+		}
+		sentSegments = append(sentSegments, &message.PokeElement{Target: poke.Target})
+		sentAnything = true
+	}
+
+	if !flushPending() {
+		return
+	}
 }
 
 func (p *PlatformAdapterOnebot) SendFileToPerson(ctx *MsgContext, userID string, path string, flag string) {
